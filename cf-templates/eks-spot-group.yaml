@@ -1,0 +1,250 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon EKS Node Group'
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Stack configuration"
+        Parameters:
+          - ClusterStackName
+          - VpcStackName
+      -
+        Label:
+          default: "Auto Scaling Configuration"
+        Parameters:
+          - TargetGroupARNs
+          - NodeAutoScalingGroupMinSize
+          - NodeAutoScalingGroupDesiredSize
+          - NodeAutoScalingGroupMaxSize
+          - OnDemandBaseCapacity
+          - OnDemandPercentageAboveBaseCapacity
+          - SpotInstancePools
+          - InstanceTypesOverride
+      -
+        Label:
+          default: "LaunchTemplate Configuration"
+        Parameters:
+          - NodeImageId
+          - KeyName
+          - BootstrapArgumentsForOnDemand
+          - BootstrapArgumentsForSpotFleet
+
+Parameters:
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+
+  NodeImageId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: /aws/service/eks/optimized-ami/1.14/amazon-linux-2/recommended/image_id
+    Description: AWS Systems Manager Parameter Store parameter of the AMI ID for the worker node instances.
+
+  NodeAutoScalingGroupMinSize:
+    Type: Number
+    Description: Minimum size of Node Group ASG.
+    Default: 1
+
+  TargetGroupARNs:
+    Type: CommaDelimitedList
+    Description: The TargetGroups of your loadbalancers, separate by commas.
+
+  NodeAutoScalingGroupDesiredSize:
+    Type: Number
+    Description: Desired size of Node Group ASG.
+    Default: 3
+
+  NodeAutoScalingGroupMaxSize:
+    Type: Number
+    Description: Maximum size of Node Group ASG.
+    Default: 5
+
+  OnDemandBaseCapacity:
+    Type: Number
+    Description: "on-demand base capacity"
+    Default: 0
+
+  OnDemandPercentageAboveBaseCapacity:
+    Type: Number
+    Description: "on-demand percentage above base capacity(0-100)"
+    Default: 0
+
+  SpotInstancePools:
+    Type: Number
+    Description: "spot instance pools(1-20)"
+    Default: 6
+
+  InstanceTypesOverride:
+    Type: CommaDelimitedList
+    Description: "6 spot instances to override (seperated by commas)"
+    Default: "t2.small, t2.micro, t3.micro, t3.small, t3.nano, t2.nano"
+
+  ClusterStackName:
+    Description: Name of the stack containing the cluster. If it is incorrect, nodes will not be able to join the cluster.
+    Type: String
+
+  VpcStackName:
+    Description: Name of the VPC stack.
+    Type: String
+
+  BootstrapArgumentsForOnDemand:
+    Description: Arguments to pass to the bootstrap script. See files/bootstrap.sh in https://github.com/awslabs/amazon-eks-ami
+    Default: "--kubelet-extra-args --node-labels=lifecycle=OnDemand --register-with-taints=onDemandInstance=true:PreferNoSchedule"
+    Type: String
+
+  BootstrapArgumentsForSpotFleet:
+    Description: Arguments to pass to the bootstrap script. See files/bootstrap.sh in https://github.com/awslabs/amazon-eks-ami
+    Default: "--kubelet-extra-args --node-labels=lifecycle=Ec2Spot"
+    Type: String
+
+Resources:
+  NodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - Fn::ImportValue: !Sub "${ClusterStackName}-NodeGroupInstanceRoleName"
+
+  NodeGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      DesiredCapacity: !Ref NodeAutoScalingGroupDesiredSize
+      MinSize: !Ref NodeAutoScalingGroupMinSize
+      MaxSize: !Ref NodeAutoScalingGroupMaxSize
+      TargetGroupARNs: !Ref TargetGroupARNs
+      MixedInstancesPolicy:
+        InstancesDistribution:
+          OnDemandAllocationStrategy: prioritized
+          OnDemandBaseCapacity: !Ref OnDemandBaseCapacity
+          OnDemandPercentageAboveBaseCapacity: !Ref OnDemandPercentageAboveBaseCapacity
+          SpotAllocationStrategy: lowest-price
+          SpotInstancePools: !Ref SpotInstancePools
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref LaunchTemplate
+            Version: !GetAtt LaunchTemplate.LatestVersionNumber
+          Overrides:
+            - InstanceType: !Select [0, !Ref InstanceTypesOverride ]
+            - InstanceType: !Select [1, !Ref InstanceTypesOverride ]
+            - InstanceType: !Select [2, !Ref InstanceTypesOverride ]
+            - InstanceType: !Select [3, !Ref InstanceTypesOverride ]
+            - InstanceType: !Select [4, !Ref InstanceTypesOverride ]
+            - InstanceType: !Select [5, !Ref InstanceTypesOverride ]
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet1"
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet2"
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet3"
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: !Ref NodeAutoScalingGroupDesiredSize
+        MaxBatchSize: '1'
+        PauseTime: 'PT5M'
+        WaitOnResourceSignals: true
+
+# For future alarms
+  LCH:
+    Type: AWS::AutoScaling::LifecycleHook
+    Properties:
+      AutoScalingGroupName: !Ref NodeGroup
+      HeartbeatTimeout: 60
+      DefaultResult: CONTINUE
+      LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "eksLaunchTemplate-${AWS::StackName}"
+      LaunchTemplateData:
+        TagSpecifications:
+          -
+            ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub 
+                      - '${ClusterName}-spot-group'
+                      - ClusterName: 
+                          Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+              - Key: KubernetesCluster
+                Value: 
+                  Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+              - Key: !Sub 
+                      - 'kubernetes.io/cluster/${ClusterName}'
+                      - ClusterName: 
+                          Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+                Value: 'owned'
+              - Key: !Sub 'kubernetes.io/cluster-autoscaler/enabled'
+                Value: 'owned'
+        SecurityGroupIds:
+        - Fn::ImportValue: !Sub "${ClusterStackName}-NodeSecurityGroup"
+        IamInstanceProfile:
+          Arn: !GetAtt NodeInstanceProfile.Arn
+        KeyName: !Ref KeyName
+        ImageId: !Ref NodeImageId
+        UserData:
+          Fn::Base64:
+            !Sub
+              - |
+                #!/bin/bash
+                set -o xtrace
+                iid=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+                export AWS_DEFAULT_REGION=${AWS::Region}
+                ilc=`aws ec2 describe-instances --instance-ids $iid --query 'Reservations[0].Instances[0].InstanceLifecycle' --output text`
+                if [ "$ilc" == "spot" ]; then
+                  /etc/eks/bootstrap.sh ${ClusterName} ${BootstrapArgumentsForSpotFleet}
+                else
+                  /etc/eks/bootstrap.sh ${ClusterName} ${BootstrapArgumentsForOnDemand}
+                fi
+                /opt/aws/bin/cfn-signal --exit-code $? \
+                        --stack  ${AWS::StackName} \
+                        --resource NodeGroup  \
+                        --region ${AWS::Region}
+              - ClusterName: 
+                  Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+
+##############################################
+# Emergency scaling, used by cloudwatch agent daemonset
+##############################################
+  NodeScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: NodeGroup
+      Cooldown: '60'
+      ScalingAdjustment: '1'
+
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-up if CPU > 60% for 2 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: '60'
+      EvaluationPeriods: '2'
+      Threshold: '80'
+      AlarmActions:
+      - Ref: NodeScaleUpPolicy
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value:
+          Ref: NodeGroup
+      ComparisonOperator: GreaterThanThreshold
+  MEMAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-up if Memory > 60% for 2 minutes
+      MetricName: MemoryUtilization
+      Namespace: System/Linux
+      Statistic: Average
+      Period: '60'
+      EvaluationPeriods: '2'
+      Threshold: '55'
+      AlarmActions:
+      - Ref: NodeScaleUpPolicy
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value:
+          Ref: NodeGroup
+      ComparisonOperator: GreaterThanThreshold

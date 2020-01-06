@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata: 
+  name: httpbin-healthcheck
+  labels:
+    app: httpbin-healthcheck
+spec: 
+  type: NodePort 
+  ports: 
+    - name: http
+      port: 80
+      nodePort: 32194
+  selector:
+    app: httpbin-healthcheck

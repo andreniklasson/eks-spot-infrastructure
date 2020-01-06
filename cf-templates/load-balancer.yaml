@@ -1,0 +1,181 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Stack configuration"
+        Parameters:
+          - VpcStackName
+          - ClusterStackName
+          - ClusterIngressPort
+          - Scheme 
+Parameters:
+  VpcStackName:
+    Type: String
+
+  ClusterStackName:
+    Type: String
+  
+  ClusterIngressPort:
+    Type: Number
+    Default: 32194 
+
+  Scheme:
+    Type: String
+    Default: internet-facing
+    AllowedValues:
+    - internet-facing
+    - internal
+
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: Leave empty for http
+
+Conditions:
+  Http: !Equals [ !Ref CertificateArn, '' ]
+  Https: !Not [!Equals [!Ref CertificateArn, '' ]]
+  Internal: !Equals [ !Ref Scheme, 'internal' ]
+  External: !Equals [ !Ref Scheme, 'internet-facing' ]
+
+Resources:
+##############################################
+# Load balancer
+##############################################
+  LoadBalancer:
+    Condition: Internal
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AWS::StackName}-ELB"
+      Scheme: !Ref Scheme
+      Subnets: 
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet1"
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet2"
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet3"
+      SecurityGroups:
+        - !Ref SecurityGroup
+
+  LoadBalancer:
+    Condition: External
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AWS::StackName}-ELB"
+      Scheme: !Ref Scheme
+      Subnets: 
+        - Fn::ImportValue: !Sub "${VpcStackName}-PublicSubnet1"
+        - Fn::ImportValue: !Sub "${VpcStackName}-PublicSubnet2"
+        - Fn::ImportValue: !Sub "${VpcStackName}-PublicSubnet3"
+      SecurityGroups:
+        - !Ref SecurityGroup
+
+  SecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+      GroupDescription: "Cluster ELB"
+      SecurityGroupIngress:
+        
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: "TCP"
+          FromPort: 80
+          ToPort: 80
+
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: "TCP"
+          FromPort: 443
+          ToPort: 443
+
+  ALBNodeSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow traffic from loadbalancer
+      GroupId: 
+        Fn::ImportValue: !Sub "${ClusterStackName}-NodeSecurityGroup"
+      SourceSecurityGroupId: !Ref SecurityGroup
+      IpProtocol: '-1'
+      FromPort: !Ref ClusterIngressPort
+      ToPort: !Ref ClusterIngressPort
+
+  LoadBalancerListener:
+    Condition: Http
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  LoadBalancerHttpsListener:
+    Condition: Https
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      Port: 443
+      Protocol: HTTPS
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: LoadBalancer
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+      Port: !Ref ClusterIngressPort 
+      Protocol: HTTP
+      HealthCheckIntervalSeconds: 35
+      HealthCheckPath: / # Configure path
+      HealthCheckProtocol: HTTP 
+      HealthCheckTimeoutSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      TargetType: instance
+      Tags:
+        - Key: 'interrupt-handler/enabled'
+          Value: 'true'
+
+  ListenerHTTPRule:
+    Condition: Http
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref LoadBalancerListener
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+
+  ListenerHTTPSRule:
+    Condition: Https
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref LoadBalancerHttpsListener
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+
+Outputs:
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+  HostedZoneId: 
+    Value: !GetAtt LoadBalancer.CanonicalHostedZoneID
+  DNSName: 
+    Value: !GetAtt LoadBalancer.DNSName
+  Arn:
+    Value: !Ref LoadBalancer

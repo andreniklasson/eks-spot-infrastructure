@@ -1,0 +1,215 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Stack configuration"
+        Parameters:
+          - ClusterName
+          - VpcStackName
+          - ClusterVersion
+
+Parameters:
+  ClusterName:
+    Type: String
+
+  VpcStackName:
+    Type: String
+    Description: The name of the deployed VPC stack
+
+  ClusterVersion:
+    Type: String
+    Default: "1.14"
+    AllowedValues:
+    - "1.14"
+    - "1.13"
+    - "1.12"
+
+Resources:
+##############################################
+# Service Role used by Clusters
+##############################################
+  ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+
+##############################################
+# EKS Cluster
+##############################################
+  Cluster:
+    Type: "AWS::EKS::Cluster"
+    Properties:
+      Name: !Ref ClusterName
+      Version: "1.14"
+      RoleArn: !GetAtt ServiceRole.Arn
+      ResourcesVpcConfig:
+        SecurityGroupIds: 
+          - !Ref ClusterControlPlaneSecurityGroup
+        SubnetIds: 
+          - Fn::ImportValue: 
+              !Sub '${VpcStackName}-PrivateSubnet1'
+          - Fn::ImportValue: 
+              !Sub '${VpcStackName}-PrivateSubnet2'
+          - Fn::ImportValue: 
+              !Sub '${VpcStackName}-PrivateSubnet3'
+
+##############################################
+# Security groups
+##############################################
+  ClusterControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for all nodes in the cluster
+      VpcId: 
+        Fn::ImportValue: 
+          !Sub '${VpcStackName}-VpcId'
+      Tags:
+      - Key: !Sub "kubernetes.io/cluster/${ClusterName}"
+        Value: 'owned'
+
+  NodeSecurityGroup:
+    DependsOn: ClusterControlPlaneSecurityGroup
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for all nodes in the cluster
+      VpcId: 
+        Fn::ImportValue: 
+          !Sub '${VpcStackName}-VpcId'
+      Tags:
+      - Key: !Sub "kubernetes.io/cluster/${ClusterName}"
+        Value: 'owned'
+
+  NodeSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow node to communicate with each other
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: '-1'
+      FromPort: 0
+      ToPort: 65535
+
+  NodeSecurityGroupFromControlPlaneIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow worker Kubelets and pods to receive communication from the cluster control plane
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref ClusterControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+
+  ControlPlaneEgressToNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow the cluster control plane to communicate with worker Kubelet and pods
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      DestinationSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+
+  NodeSecurityGroupFromControlPlaneOn443Ingress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow pods running extension API servers on port 443 to receive communication from cluster control plane
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref ClusterControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  ControlPlaneEgressToNodeSecurityGroupOn443:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow the cluster control plane to communicate with pods running extension API servers on port 443
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      DestinationSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  ClusterControlPlaneSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow pods to communicate with the cluster API Server
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      ToPort: 443
+      FromPort: 443
+
+  NodeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Policies:
+        - PolicyName: assume-kube-role
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/k8s-*
+                Action:
+                  - sts:AssumeRole
+
+##############################################
+# OutPuts
+##############################################
+Outputs:
+  ClusterName:
+      Description: Name of the cluster
+      Value: !Ref ClusterName
+      Export:
+          Name: !Sub "${AWS::StackName}-ClusterName"
+
+  NodeSecurityGroup:
+      Description: Name of the cluster
+      Value: !Ref NodeSecurityGroup
+      Export:
+          Name: !Sub "${AWS::StackName}-NodeSecurityGroup"
+
+  NodeGroupInstanceRoleARN:
+      Description: Name of the cluster
+      Value: !GetAtt NodeInstanceRole.Arn
+      Export:
+          Name: !Sub "${AWS::StackName}-NodeGroupInstanceRoleARN"
+
+  NodeGroupInstanceRoleName:
+      Description: Name of the cluster
+      Value: !Ref NodeInstanceRole
+      Export:
+          Name: !Sub "${AWS::StackName}-NodeGroupInstanceRoleName"
+
