@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:  
+  ClusterStackName:
+    Type: String
+    Default: MyClusterStack
+
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: k8s-cluster-autoscaler
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS: 
+                Fn::ImportValue: 
+                  !Sub "${ClusterStackName}-NodeGroupInstanceRoleARN"
+      Policies:
+        - PolicyName: 'Autoscaling-policy'
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'autoscaling:DescribeAutoScalingGroups'
+                  - 'autoscaling:DescribeAutoScalingInstances'
+                  - 'autoscaling:DescribeTags'
+                  - 'autoscaling:DescribeLaunchConfigurations'
+                  - 'autoscaling:SetDesiredCapacity'
+                  - 'autoscaling:TerminateInstanceInAutoScalingGroup'
+                  - 'ec2:DescribeLaunchTemplateVersions'
+                Resource: "*"

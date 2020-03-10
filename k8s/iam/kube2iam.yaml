@@ -1,0 +1,119 @@
+---
+# Source: kube2iam/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app: kube2iam
+    chart: kube2iam-0.10.0
+    heritage: Tiller
+    release: my-kubeiam-release
+  name: my-kubeiam-release-kube2iam
+---
+# Source: kube2iam/templates/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRole
+metadata:
+  labels:
+    app: kube2iam
+    chart: kube2iam-0.10.0
+    heritage: Tiller
+    release: my-kubeiam-release
+  name: my-kubeiam-release-kube2iam
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+      - pods
+    verbs:
+      - list
+      - watch
+      - get
+---
+# Source: kube2iam/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app: kube2iam
+    chart: kube2iam-0.10.0
+    heritage: Tiller
+    release: my-kubeiam-release
+  name: my-kubeiam-release-kube2iam
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: my-kubeiam-release-kube2iam
+subjects:
+  - kind: ServiceAccount
+    name: my-kubeiam-release-kube2iam
+    namespace: kube-system
+---
+# Source: kube2iam/templates/daemonset.yaml
+apiVersion: extensions/v1beta1
+kind: DaemonSet
+metadata:
+  labels:
+    app: kube2iam
+    chart: kube2iam-0.10.0
+    heritage: Tiller
+    release: my-kubeiam-release
+  name: my-kubeiam-release-kube2iam
+spec:
+  template:
+    metadata:
+      labels:
+        app: kube2iam
+        release: my-kubeiam-release
+    spec:
+      containers:
+        - name: kube2iam
+          image: "jtblin/kube2iam:0.10.4"
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --host-interface=eni+
+            - --node=$(NODE_NAME)
+            - --host-ip=$(HOST_IP)
+            - --iptables=true
+            - --auto-discover-base-arn
+            - --auto-discover-default-role=true
+            - --app-port=8181
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - containerPort: 8181
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8181
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+            timeoutSeconds: 1
+          resources:
+            {}
+            
+          securityContext:
+            privileged: true
+      hostNetwork: true
+      serviceAccountName: my-kubeiam-release-kube2iam
+      tolerations:
+        []
+        
+  updateStrategy:
+    type: OnDelete
+
+---
+# Source: kube2iam/templates/secret.yaml
+
+

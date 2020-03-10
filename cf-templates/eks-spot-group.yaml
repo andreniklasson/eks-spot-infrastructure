@@ -1,17 +1,17 @@
 ---
+### Amazon EKS Node Group, André Niklasson
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Amazon EKS Node Group'
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
-      -
-        Label:
+      - Label:
           default: "Stack configuration"
         Parameters:
           - ClusterStackName
           - VpcStackName
-      -
-        Label:
+          - AvailabilityZone
+      - Label:
           default: "Auto Scaling Configuration"
         Parameters:
           - TargetGroupARNs
@@ -22,8 +22,7 @@ Metadata:
           - OnDemandPercentageAboveBaseCapacity
           - SpotInstancePools
           - InstanceTypesOverride
-      -
-        Label:
+      - Label:
           default: "LaunchTemplate Configuration"
         Parameters:
           - NodeImageId
@@ -41,6 +40,14 @@ Parameters:
     Default: /aws/service/eks/optimized-ami/1.14/amazon-linux-2/recommended/image_id
     Description: AWS Systems Manager Parameter Store parameter of the AMI ID for the worker node instances.
 
+  AvailabilityZone:
+    Type: String
+    Default: "1"
+    AllowedValues:
+    - "1"
+    - "2"
+    - "3"
+
   NodeAutoScalingGroupMinSize:
     Type: Number
     Description: Minimum size of Node Group ASG.
@@ -53,12 +60,12 @@ Parameters:
   NodeAutoScalingGroupDesiredSize:
     Type: Number
     Description: Desired size of Node Group ASG.
-    Default: 3
+    Default: 5
 
   NodeAutoScalingGroupMaxSize:
     Type: Number
     Description: Maximum size of Node Group ASG.
-    Default: 5
+    Default: 7
 
   OnDemandBaseCapacity:
     Type: Number
@@ -73,20 +80,22 @@ Parameters:
   SpotInstancePools:
     Type: Number
     Description: "spot instance pools(1-20)"
-    Default: 6
+    Default: 2
 
   InstanceTypesOverride:
     Type: CommaDelimitedList
-    Description: "6 spot instances to override (seperated by commas)"
-    Default: "t2.small, t2.micro, t3.micro, t3.small, t3.nano, t2.nano"
+    Description: "2 spot instances to override (seperated by commas)"
+    Default: "t3.small, t2.small"
 
   ClusterStackName:
     Description: Name of the stack containing the cluster. If it is incorrect, nodes will not be able to join the cluster.
     Type: String
+    Default: MyClusterStack
 
   VpcStackName:
     Description: Name of the VPC stack.
     Type: String
+    Default: MyVpcStack
 
   BootstrapArgumentsForOnDemand:
     Description: Arguments to pass to the bootstrap script. See files/bootstrap.sh in https://github.com/awslabs/amazon-eks-ami
@@ -99,6 +108,9 @@ Parameters:
     Type: String
 
 Resources:
+##############################################
+# NodeGroup
+##############################################
   NodeInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -127,14 +139,24 @@ Resources:
           Overrides:
             - InstanceType: !Select [0, !Ref InstanceTypesOverride ]
             - InstanceType: !Select [1, !Ref InstanceTypesOverride ]
-            - InstanceType: !Select [2, !Ref InstanceTypesOverride ]
-            - InstanceType: !Select [3, !Ref InstanceTypesOverride ]
-            - InstanceType: !Select [4, !Ref InstanceTypesOverride ]
-            - InstanceType: !Select [5, !Ref InstanceTypesOverride ]
       VPCZoneIdentifier:
-        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet1"
-        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet2"
-        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet3"
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet${AvailabilityZone}"
+      Tags:
+        - Key: Name
+          Value: !Sub 
+                - '${ClusterName}-spot-group'
+                - ClusterName: 
+                    Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 
+                - 'kubernetes.io/cluster/${ClusterName}'
+                - ClusterName: 
+                    Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+          Value: 'owned'
+          PropagateAtLaunch: 'true'
+        - Key: 'kubernetes.io/cluster-autoscaler/enabled'
+          Value: 'owned'
+          PropagateAtLaunch: 'true'
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MinInstancesInService: !Ref NodeAutoScalingGroupDesiredSize
@@ -142,39 +164,11 @@ Resources:
         PauseTime: 'PT5M'
         WaitOnResourceSignals: true
 
-# For future alarms
-  LCH:
-    Type: AWS::AutoScaling::LifecycleHook
-    Properties:
-      AutoScalingGroupName: !Ref NodeGroup
-      HeartbeatTimeout: 60
-      DefaultResult: CONTINUE
-      LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
-
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateName: !Sub "eksLaunchTemplate-${AWS::StackName}"
       LaunchTemplateData:
-        TagSpecifications:
-          -
-            ResourceType: instance
-            Tags:
-              - Key: Name
-                Value: !Sub 
-                      - '${ClusterName}-spot-group'
-                      - ClusterName: 
-                          Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
-              - Key: KubernetesCluster
-                Value: 
-                  Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
-              - Key: !Sub 
-                      - 'kubernetes.io/cluster/${ClusterName}'
-                      - ClusterName: 
-                          Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
-                Value: 'owned'
-              - Key: !Sub 'kubernetes.io/cluster-autoscaler/enabled'
-                Value: 'owned'
         SecurityGroupIds:
         - Fn::ImportValue: !Sub "${ClusterStackName}-NodeSecurityGroup"
         IamInstanceProfile:
@@ -201,10 +195,29 @@ Resources:
                         --region ${AWS::Region}
               - ClusterName: 
                   Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub 
+                      - '${ClusterName}-spot-group'
+                      - ClusterName: 
+                          Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+              - Key: KubernetesCluster
+                Value: 
+                  Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
 
 ##############################################
-# Emergency scaling, used by cloudwatch agent daemonset
+# Emergency scaling, used by cloudwatch agent or clouwatch agent daemonset
 ##############################################
+  LCH:
+    Type: AWS::AutoScaling::LifecycleHook
+    Properties:
+      AutoScalingGroupName: !Ref NodeGroup
+      HeartbeatTimeout: 60
+      DefaultResult: CONTINUE
+      LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
+
   NodeScaleUpPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:

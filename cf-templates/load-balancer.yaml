@@ -1,4 +1,5 @@
 ---
+### Amazon Application Load Balancer, André Niklasson
 AWSTemplateFormatVersion: 2010-09-09
 Metadata:
   AWS::CloudFormation::Interface:
@@ -14,9 +15,11 @@ Metadata:
 Parameters:
   VpcStackName:
     Type: String
+    Default: MyVpcStack
 
   ClusterStackName:
     Type: String
+    Default: MyClusterStack
   
   ClusterIngressPort:
     Type: Number

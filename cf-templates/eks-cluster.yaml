@@ -1,4 +1,5 @@
 ---
+### Amazon EKS Cluster, André Niklasson
 AWSTemplateFormatVersion: 2010-09-09
 Metadata:
   AWS::CloudFormation::Interface:
@@ -14,10 +15,12 @@ Metadata:
 Parameters:
   ClusterName:
     Type: String
+    Default: MyCluster
 
   VpcStackName:
     Type: String
     Description: The name of the deployed VPC stack
+    Default: MyVpcStack
 
   ClusterVersion:
     Type: String
@@ -66,7 +69,7 @@ Resources:
               !Sub '${VpcStackName}-PrivateSubnet3'
 
 ##############################################
-# Security groups
+# ClusterControlPlane and Node Security groups
 ##############################################
   ClusterControlPlaneSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -157,6 +160,9 @@ Resources:
       ToPort: 443
       FromPort: 443
 
+##############################################
+# Instance role used by the nodegroups
+##############################################
   NodeInstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -186,7 +192,7 @@ Resources:
                   - sts:AssumeRole
 
 ##############################################
-# OutPuts
+# Outputs
 ##############################################
 Outputs:
   ClusterName:

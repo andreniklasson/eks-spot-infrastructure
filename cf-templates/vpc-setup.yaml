@@ -1,3 +1,4 @@
+### Amazon VPC, André Niklasson
 AWSTemplateFormatVersion: 2010-09-09
 Metadata:
   AWS::CloudFormation::Interface:
@@ -23,6 +24,7 @@ Metadata:
 Parameters:
   EnvironmentName:
     Description: An environment name that will be prefixed to resource names
+    Default: workshop
     Type: String
 
   VpcCIDR:
@@ -62,6 +64,7 @@ Parameters:
 
   NumberOfNatGateways:
     Type: Number
+    Default: 1
     AllowedValues:
     - 0
     - 1
