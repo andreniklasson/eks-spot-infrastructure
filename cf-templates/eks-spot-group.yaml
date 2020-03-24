@@ -65,7 +65,7 @@ Parameters:
   NodeAutoScalingGroupMaxSize:
     Type: Number
     Description: Maximum size of Node Group ASG.
-    Default: 7
+    Default: 10
 
   OnDemandBaseCapacity:
     Type: Number
