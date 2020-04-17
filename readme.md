@@ -1,5 +1,5 @@
 # EKS running on spot instances 
-This repo contains the material you need to get an EKS cluster up and running while savin' some money using spot instances. In this workshop we will create a new VPC which contains an EKS Cluster exposed by an Application Load Balancer. 
+This repo contains the material you need to get an EKS cluster up and running while savin' some money using spot instances. In this workshop we will create a new VPC containing an EKS Cluster exposed by an Application Load Balancer. 
 
 <img  src="images/infra.png">
 
@@ -36,7 +36,7 @@ Verify you can connect to the created cluster:
 kubect get svc
 ```
 
-### Step 3: Configure the Auth ConfigMap
+## Step 3: Configure the Auth ConfigMap
 To grant additional AWS users or roles the ability to interact with your cluster, you must edit the aws-auth ConfigMap within the cluster. This includes the roles used by the nodegroups.
 
 Add the IAM Role used by the nodegroups by modifying the _k8s/aws-auth-cm.yaml_ file.
