@@ -57,7 +57,7 @@ Parameters:
     Type: String
     Default: 10.151.43.0/24
 
-  PrivateSubne3CIDR:
+  PrivateSubnet3CIDR:
     Description: Please enter the IP range (CIDR notation) for the private subnet in the third Availability Zone
     Type: String
     Default: 10.151.44.0/24
@@ -157,7 +157,7 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       AvailabilityZone: !Select [2, !GetAZs ""]
-      CidrBlock: !Ref PrivateSubne3CIDR
+      CidrBlock: !Ref PrivateSubnet3CIDR
       MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
