@@ -133,7 +133,7 @@ Navigate to the AWS console and deploy a stack of _k8s/cluster-autoscaler/cluste
 
 Deploy the cluster-autoscaler deployment:
 ```
-kubectl apply -f k8s/cluster-autoscaler/cluster-autoscaler.yaml
+kubectl apply -f k8s/cluster-autoscaler/cluster-autoscaler.yml
 ```
 
 Make sure the pod is up and running:
